@@ -1,124 +1,136 @@
-# a `Stream` spec
+# `Stream` 规范
 
-This document defines the behaviour that a `Stream` must implement in order to be compatible with `Stream#pipe`. 
-This is not an official document, but is intended as a guide to produce correct behaviour in user-land streams.
+这篇文当定义了 `Stream` 为了实现对 `Stream#pipe` 的兼容所必须实现的接口。
+
+这不是一篇官方文档，但是却可以作为如何正确地实现 user-land streams 的指南。
 
 ## Stream
 
-All streams *must* emit `'error'` if writing to or reading from becomes physically impossible. 
-`'error'` implys that the stream has ended, do not emit `'end'` after error, `'close'` may be emitted.
+所有 streams 在物理上不可能继续读或写的时候 *必须* 发出 `'error'` 事件。
+`'error'` 意味着 stream 的终止，因此不要在 `'end'` 之后再发出 `'end'`；`'close'` 则有可能发出。
 
-All streams *should* emit `'close'`.
-`'close'` means that any underlying resources have been disposed of.
-`'close'` must be emitted either after end, or instead of `'end'`.
+所有 streams *应该* 发出 `'close'`。`'close'` 意味着所有底层资源都被处置完毕。`'close'` 必须在 `'end'` 之后发出或者干脆替代 `'end'`。
 
-Emitting `'close'` without `'end'` indicates a broken pipe - `Stream#pipe` will call `dest.destroy()`
+仅仅发出 `'close'`（不包含`'end'`）表明一个损坏的管道 - `Stream#pipe` 将调用 `dest.destroy()` 来通知对方销毁管道。
 
-If a `ReadableStream` has ended normally, it *must not* emit `'close'` before `'end'`.
+如果一个 `ReadableStream` 正常终止，那么 *必须不能* 在 `'end'` 之前发出`'close'`。
 
-A `Stream` *must not* emit `'error'` if the error is recoverable. 
-(that is not in the stream spec)
+如果 error 是可以恢复的，那么 `Stream` *必须不能* 发出 error 事件（在 Node.js 的 stream spec 中没有提及这一点）。
 
-All streams *should* implement `destroy` but a `WritableStream` *must* implement `destroy`.
+所有类型的 stream 应该实现 `destroy`；`WritableStream` 则 *必须实现* `destroy`。
 
 ### emit('error')
 
-All streams *must* emit `'error'` when an error that is not recoverable has occurred. 
-If it has become physically impossible to write to or read from the `Stream`, then emit `'error'`.
+所有类型的 streams 当遇到不可恢复的错误时，*必须* 发出 `'error'`。
+如果 `Stream` 物理上不可能读或写，也要发出 `'error'`。
 
-A `WriteableStream` *may* throw an error if `write` has been called after `end`.
-(which should never happen, in correct usage)
-
-otherwise, a stream *must never* throw an error. (always emit)
+在 `end` 之后，对一个 `WriteableStream` 调用 `write`，则 *可能* 抛出异常（在正常用法下，不应该出现这种情况）；除此以外的情况，遇到不可恢复的 error，则 *不允许* 抛出异常（只能emit error）。
 
 ## WritableStream
 
-A `WritableStream` *must* implement methods `write`, `end`, and `destroy`, 
-and `writable` *must* be set to `true`, and *must* inherit `Stream#pipe`
+一个 `WritableStream` 必须实现 `write`, `end`, 和 `destroy` 方法；并且其 `writable` 属性 *必须* 为 `true`，且 *必须* 从 `Stream#pipe` 派生。
+
+```
+                    ------------------
+   pipe    write    |                |
+ ------->  end      | WritableStream |
+           destroy  |                |
+                    ------------------
+```
 
 ### write(data)
 
-`write` must return either `true` or `false`.
-(if `false` then the writer *should* pause)
-If `write` is called after end, an error *may* be thrown.
+`write` 必须返回 `true` 或者 `false`。
+(如果返回 `false`，则 writer *应该* 进入 pause 状态)。
 
-If `write` returns `false`,it *must* eventually emit `'drain'`. 
-`write` returning `false` means the stream is paused. 
-paused means (or downstream) is at capacity, 
-and the writer/upstream *should attempt* to slow down or stop. 
-It does not mean all data must be buffered, although that is something a stream may reasonably do.
+如果在 end 之后调用 `write`，那么 *可以* 抛出异常。
+
+如果 `write` 返回 `false`，那么它最终会 *一定会* 发出  `'drain'`。
+
+`write` 返回 `false` 意味着 stream 被暂停了。
+
+暂停意味着 stream(或其下游 stream) 没有能力处理后续数据，而 writer 或上游 stream *应该尝试* 降速或者停止。
+
+Paused 不意味着所有数据都将被缓存，尽管采用缓存对于一个 Stream 的实现是合理的。
 
 ### end()
 
-Calling `end` *must* set `writable` to `false`. 
-If the `Stream` is also readable, it *must* eventually emit `'end'`, and then `'close'`.
-If the `Stream` in not also readable, it *must* eventually emit `'close'` but not emit `'end'`.
+实现 `end` 方法 *必须* 设置 stream 的 `writable` 属性为 `false`。
+
+如果 `Stream` 也是 readable 的，那么它 *必须* 最终发出 `'end'`，然后再发出 `'close'`。
+
+如果 `Stream` 不是 readable 的，那么 `Stream` 最终 *必须* 发出 `'close'`, 而不会发出 `'end'`。
 
 ### destroy()
 
-Used to dispose of a `Stream`.
+用来清理 `Stream` 的状态。
 
-Calling `destroy` *must* dispose of any underlying resources.
-Calling `destroy` *must* emit `'close'` eventually, 
-once any underlying resources are disposed of.
+调用 `destroy` *必须* 处理好底层的资源状态。
 
+调用 `destroy` 之后，清理完底层资源之后，最终 *必须* 发出 `'close'`
 
 ### emit ('drain')
 
-After pausing, a `Stream` must eventually emit `'drain'`. 
-For example, when if a call to `write() === false`,  
-`Stream#pipe` will call `pause` on the source and  
-then call `source.resume()`, when the dest emits `'drain'`.
+在暂停之后，一个 `Stream` 最终 *必须* 发出 `'drain'`，用来通知上游`'resume'`。
 
-If drain is not emitted correctly, it's possible for `'data'` events to stop coming 
-(depending on the source's behaviour when paused).
+```
+                source.pipe(dest);
+
+source.pause() <---------------- dest.write() === false
+source.resume() <---------------- dest.emit('drain')
+```
+
+例如上图：当 `Stream#pipe` 调用 `dest.write()` 返回 `false` 的时候，`Stream#pipe` 将调用 `source.pause()` 以暂停读取。而当 dest 发出 `'drain'` 之后，`Stream#pipe` 将调用 `source.resume()` 以恢复读取。
+
+如果没有正确地发出 `drain`，那么将可能无法获取后续的 `'data'` 事件（依赖于 source 对于 pause 的实现）。
 
 ## ReadableStream
 
-A `ReadableStream` *must* inherit `pipe` from `Stream`, 
-and set `readable` to `true`, and *must* emit zero or more 'data' events, 
-followed by a single `end` event. A `ReadableStream` *may* implement `pause` and `resume` methods.
+一个 `ReadableStream` *must* 从 `Stream` 的 `pipe` 类派生，并且设置 `readable` 属性为 `true`，随后 *必须* 发出0或多个 `'data'` 事件。结束时，则发出 `'end'` 事件。一个 `ReadableStream` *可以* 实现自己的 `pause` 和 `resume` 方法。
 
-* I will not bother to specify the behaviour of `pipe` because I am attempting to document what must be done in order for your `Stream` to be compatible with `pipe`.
+
+* 在这里我不会回纠缠于 `pipe` 的行文模式，因为我只是试图记录你实现自己的 `Stream` 必须实现的事情，并且可以兼容 `pipe` 的行为。
 
 ### emit('data', data)
 
-A `ReadableStream` *may* emit one or more `'data'` events.
-A `ReadableStream` *must not* emit emit a `'data'` event after it has emitted `'end'` 
+一个 `ReadableStream` 可能发出一个或多个 `'data'` 事件。
+当 `ReadableStream` 发出 `'end'` 事件之后，不应该再发出 `'data'` 事件。
 
 ### emit('end')
 
-A `ReadableStream` *should* emit an `'end'` event when it is not going to emit any more `'data'` events. 
-`'end'` *must not* be emitted more than once. 
-A `ReadableStream` may set `readable` to `false` after it has emitted the `'end'` event.
+当 `ReadableStream` 没有新的 `'data'` 事件要发出时，则 *应该* 发出 `'end'` 来通知 `Stream#pipe`。`'end'` 事件只能发出一次。
 
-Also, a `Stream` should internally call `destroy` after it has emitted `'end'`. 
+当`ReadableStream` 发出之后，可以设置 `readable` 属性为 `false`。
+
+并且，一个 `Stream` 在发出 `'end'` 之后，内部也应该调用 `destroy` 来清理资源。
 
 ### emit ('close')
 
-A `ReadableStream` *must* emit a `'close'` event after the `'end'` event. `'close'` *must* only be emitted once. if `destroy` is called, `'close'` must be emitted, unless the stream has already ended normally. If `'close'` is emitted before `'end'` that signifies a broken stream, this *should* only happen if `destroy` was called. 
+在 `'end'` 事件之后，`ReadableStream` 必须发出 `'close'` 事件。`'close'` *只能* 事件发出一次。如果 `destroy` 被调用，那么 `'close'` 必须被发出，除非 stream 已经被正常终止过了。如果在 `'end'` 之前发出了 `'close'` 那么意味着这是一个损坏的 stream，仅当 `destroy` 被调用后 *可能* 出现这种情况。
 
-Emitting close will cause `pipe` to call `destroy` on the down stream pipe, if it is emitted before `end`. 
+在发出 `'end'`之前发出 `'close'` 事件将导致 `pipe` 调用下游 stream 的 `destroy`。
 
 ### pause()
 
-A readable `Stream` *may* implement the `pause` method. 
-When `pause` is called, the stream should attempt to emit `'data'` less often. 
-(possibly stopping altogether until `resume` is called)
+一个 readable `Stream` *可以* 实现 `pause` 方法（被 `Stream#pipe` 调用）。
+
+当 `pause` 被调用后，stream 应该尝试减少发出 `'data'` 事件（也可能完全停止发出 `'data'`）。
+
+可见，pause 之后是否发出 `'data'` 是可选的行为，pause 只是 `Stream#pipe` 对 readable stream 的建议。
 
 ### resume()
 
-A `ReadableStream` *may* implement the `resume` method. 
-If the `Stream` has been paused, it may now emit `'data'` more often, 
-or commence emitting `data` if it has stopped all together.
+一个 `ReadableStream` *可以* 实现 `resume` 方法。
 
-If a stream is also writable, and has returned `false` on `write` it *must* now eventually emit `drain`
+如果之前 `Stream` 处于 pause 状态，那么 resume 之后，可以以更频繁的频率来发送 `'data'` 或者恢复发出 `'data'`(如果之前处于完全停止状态)。
+
+如果 stream 也是 writable 的，并且之前调用 `write` 返回 `false`，那么它最终 *必须* 发出 `drain`。
+
 
 ### destroy()
 
-A `ReadableStream` *should* implement `destroy`.
+一个 `ReadableStream` *应该* 实现 `destroy`。
 
-Calling `destroy` *must* dispose of any underlying resources.
-Calling `destroy` *must* emit `'close'` eventually, 
-once any underlying resources are disposed of.
+调用 `destroy` *必须* 清理好底层资源。
 
+调用 `destroy` 之后，一旦清理完底层资源，最终 *必须* 发出 `'close'`。
